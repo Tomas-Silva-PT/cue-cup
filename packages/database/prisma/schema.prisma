@@ -1,0 +1,524 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// =============================================================================
+// USER ROLES
+// =============================================================================
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+// =============================================================================
+// AUTHENTICATION
+// =============================================================================
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  password_hash String
+  name          String
+  avatar_url    String?
+  role          UserRole @default(USER)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  player Player?
+}
+
+// =============================================================================
+// PLAYERS AND TEAMS
+// =============================================================================
+
+model Player {
+  id         String   @id @default(uuid())
+  user_id    String   @unique
+  nickname   String   @unique
+  bio        String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user          User         @relation(fields: [user_id], references: [id])
+  teams         TeamMember[]
+  teams_created Team[]       @relation("TeamCreator")
+
+  tournaments Tournament[]
+
+  tournamentParticipants TournamentParticipant[]
+
+  tournamentInvitesSent TournamentInvite[] @relation("InviteSender")
+
+  tournamentInvitesReceived TournamentInvite[] @relation("InviteReceiver")
+
+  matchParticipants MatchParticipant[]
+
+  resultsProposed Result[] @relation("ResultProposer")
+
+  resultsConfirmed Result[] @relation("ResultConfirmer")
+
+  challengesSent Challenge[] @relation("ChallengeChallenger")
+
+  challengesReceived Challenge[] @relation("ChallengeChallenged")
+
+  scheduleProposalsSent ScheduleProposal[] @relation("ScheduleProposer")
+
+  scheduleProposalsReceived ScheduleProposal[] @relation("ScheduleResponder")
+}
+
+model Team {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  description String?
+  avatar_url  String?
+  created_by  String
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  creator Player       @relation("TeamCreator", fields: [created_by], references: [id])
+  members TeamMember[]
+
+}
+
+model TeamMember {
+  id        String         @id @default(uuid())
+  team_id   String         @map("team_id")
+  player_id String         @map("player_id")
+  role      TeamMemberRole @default(MEMBER)
+  joined_at DateTime       @default(now()) @map("joined_at")
+
+  team   Team   @relation(fields: [team_id], references: [id])
+  player Player @relation(fields: [player_id], references: [id])
+
+  @@unique([team_id, player_id])
+}
+
+enum TeamMemberRole {
+  OWNER
+  MEMBER
+}
+
+// =============================================================================
+// SPORTS
+// =============================================================================
+
+model Sport {
+  id          String  @id @default(uuid())
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  icon_url    String?
+
+  // Regras default da modalidade
+  // Exemplo Pool 8-ball:
+  // {
+  //   "playersPerSide": 1,
+  //   "scoringUnit": "frames",
+  //   "allowDraws": false,
+  //   "defaultBestOf": 1,
+  //   "winCondition": "frames",
+  //   "maxScorePerUnit": null,
+  //   "tiebreakerRules": ["sudden_death"],
+  //   "rules": {
+  //     "ballInHand": false,
+  //     "sacaBola": true,
+  //     "callPocket": false
+  //   }
+  // }
+  rules Json
+
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  tournaments Tournament[]
+
+  challenges Challenge[]
+}
+
+// =============================================================================
+// TOURNAMENTS
+// =============================================================================
+
+model Tournament {
+  id          String  @id @default(uuid())
+  name        String
+  slug        String  @unique
+  description String?
+  sport_id    String
+
+  prizes TournamentPrize[]
+
+  // Configs
+  status      TournamentStatus     @default(DRAFT)
+  visibility  TournamentVisibility @default(PRIVATE)
+  min_players Int                  @default(2)
+  max_players Int?
+  teamBased   Boolean              @default(false)
+
+  invitation_code String? @unique
+
+  is_active  Boolean  @default(true)
+  created_by String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  creator Player @relation(fields: [created_by], references: [id])
+  sport   Sport  @relation(fields: [sport_id], references: [id])
+
+  tournamentParticipants TournamentParticipant[]
+
+  tournamentInvites TournamentInvite[]
+
+  phases Phase[]
+}
+
+model TournamentPrize {
+  id            String  @id @default(uuid())
+  tournament_id String 
+  position      Int
+  name          String
+  description   String?
+  value         Float
+
+  tournament Tournament @relation(fields: [tournament_id], references: [id])
+
+  @@unique([tournament_id, position])
+}
+
+enum TournamentVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum TournamentStatus {
+  DRAFT
+  OPEN
+  ONGOING
+  COMPLETED
+  CANCELED
+}
+
+model TournamentParticipant {
+  id            String                      @id @default(uuid())
+  tournament_id String
+  player_id     String
+  team_id       String?
+  status        TournamentParticipantStatus @default(PENDING)
+
+  joined_at  DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  tournament Tournament @relation(fields: [tournament_id], references: [id])
+  player     Player     @relation(fields: [player_id], references: [id])
+
+  @@unique([tournament_id, player_id])
+  phaseGroupParticipants PhaseGroupParticipant[]
+}
+
+enum TournamentParticipantStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+model TournamentInvite {
+  id                String                 @id @default(uuid())
+  tournament_id     String
+  invited_by        String
+  invited_player_id String
+  status            TournamentInviteStatus @default(PENDING)
+  expires_at        DateTime?
+  created_at        DateTime               @default(now())
+  responded_at      DateTime?
+
+  tournament    Tournament @relation(fields: [tournament_id], references: [id])
+  sender        Player     @relation("InviteSender", fields: [invited_by], references: [id])
+  invitedPlayer Player?    @relation("InviteReceiver", fields: [invited_player_id], references: [id])
+}
+
+enum TournamentInviteStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+// =============================================================================
+// PHASES
+// =============================================================================
+
+model Phase {
+  id            String    @id @default(uuid())
+  tournament_id String
+  name          String
+  description   String?
+  order         Int
+  type          PhaseType
+
+  // Configuração da fase — validada na app com Zod por phaseType
+  // ROUND_ROBIN:         { "advanceTopN": 2, "tiebreak": ["wins", "frame_diff", "head_to_head"] }
+  // SINGLE_ELIMINATION:  { "bestOf": 5, "seeded": true, "thirdPlaceMatch": false }
+  // DOUBLE_ELIMINATION:  { "bestOf": 3 }
+  // SWISS:               { "rounds": 7, "bestOf": 3 }
+  // LEAGUE:              { "pointsWin": 3, "pointsDraw": 1, "pointsLoss": 0, "bestOf": 1 }
+  config Json
+
+  status       PhaseStatus @default(PENDING)
+  created_at   DateTime    @default(now())
+  updated_at   DateTime    @updatedAt
+  started_at   DateTime?
+  completed_at DateTime?
+
+  tournament Tournament   @relation(fields: [tournament_id], references: [id])
+  groups     PhaseGroup[]
+}
+
+enum PhaseType {
+  ROUND_ROBIN
+  SINGLE_ELIMINATION
+  DOUBLE_ELIMINATION
+  SWISS
+  LEAGUE
+}
+
+enum PhaseStatus {
+  PENDING
+  ONGOING
+  COMPLETED
+  CANCELED
+}
+
+model PhaseGroup {
+  id          String  @id @default(uuid())
+  phase_id    String
+  name        String
+  description String?
+  order       Int
+
+  created_at DateTime @default(now())
+
+  phase   Phase   @relation(fields: [phase_id], references: [id])
+  matches Match[]
+
+  phaseGroupParticipants PhaseGroupParticipant[]
+}
+
+model PhaseGroupParticipant {
+  id             String @id @default(uuid())
+  phase_group_id String
+  tournament_participant_id      String
+  final_position Int?
+
+  phaseGroup PhaseGroup @relation(fields: [phase_group_id], references: [id])
+  participant     TournamentParticipant     @relation(fields: [tournament_participant_id], references: [id])
+
+  created_at DateTime @default(now())
+
+  @@unique([phase_group_id, tournament_participant_id])
+}
+
+// =============================================================================
+// MATCHES
+// =============================================================================
+
+model Match {
+  id       String      @id @default(uuid())
+  status   MatchStatus @default(AWAITING_SCHEDULE)
+
+  // Contexto do jogo
+  context        MatchContext @default(CHALLENGE)
+  phase_group_id String? // Se for parte de uma fase de grupo
+  challenge_id   String? // Se for parte de um desafio direto entre jogadores
+
+  // Participantes
+  participants MatchParticipant[]
+
+  // Resultado
+  winner MatchSide?
+
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  phaseGroup PhaseGroup? @relation(fields: [phase_group_id], references: [id])
+  challenge  Challenge?    @relation(fields: [challenge_id], references: [id])
+
+  sessions Session[]
+
+  scheduleProposals ScheduleProposal[]
+}
+
+enum MatchStatus {
+  AWAITING_SCHEDULE
+  SCHEDULED
+  PAUSED
+  WALKOVER
+  ONGOING
+  COMPLETED
+  CANCELED
+}
+
+enum MatchContext {
+  CHALLENGE // Desafio direto criado por um jogador, não necessariamente parte de um torneio
+  TOURNAMENT
+}
+
+model MatchParticipant {
+  id        String @id @default(uuid())
+  match_id  String
+  player_id String
+  side MatchSide
+
+  match   Match   @relation(fields: [match_id], references: [id])
+  player  Player  @relation(fields: [player_id], references: [id])
+
+  created_at DateTime @default(now())
+
+  @@unique([match_id, player_id])
+}
+
+enum MatchSide {
+  HOME
+  AWAY
+}
+
+model Session {
+  id        String @id @default(uuid())
+  match_id  String
+  number    Int    // Número da sessão dentro do match (ex: 1, 2, 3...)
+  note      String?
+  stream_url String?
+  location String?
+
+  status SessionStatus @default(IN_PROGRESS)
+
+  started_at DateTime @default(now())
+  ended_at   DateTime?
+  created_at DateTime @default(now())
+
+  match   Match   @relation(fields: [match_id], references: [id])
+  result Result?
+}
+
+enum SessionStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELED
+}
+
+model Result {
+  id         String @id @default(uuid())
+  session_id String @unique
+
+  // Resultado
+  score_home Int
+  score_away Int
+  status ResultStatus @default(PROPOSED)
+  proposed_by String
+  confirmation_method ResultConfirmationMethod @default(MUTUAL_AGREEMENT)
+  confirmedBy String?
+
+  submitted_at DateTime @default(now())
+  confirmed_at DateTime?
+  created_at DateTime @default(now())
+
+  history Json @default("[]") // Histórico de alterações do resultado, armazenado como JSON
+  // [{ score_home: 1, score_away: 0, changed_by: "...", changed_at: "..." }]
+
+  session Session @relation(fields: [session_id], references: [id])
+  proposer Player @relation("ResultProposer", fields: [proposed_by], references: [id])
+  confirmer Player? @relation("ResultConfirmer", fields: [confirmedBy], references: [id])
+}
+
+enum ResultStatus {
+  PROPOSED
+  CONFIRMED
+  DISPUTED
+  REJECTED
+}
+
+enum ResultConfirmationMethod {
+  MUTUAL_AGREEMENT
+  REFEREE_DECISION
+}
+
+// =============================================================================
+// SCHEDULE
+// =============================================================================
+
+model ScheduleProposal {
+  id       String @id @default(uuid())
+  match_id  String
+  status ScheduleProposalStatus @default(PENDING)
+  
+  proposed_by String
+  proposed_time DateTime
+  location String?
+  note String?
+
+  responded_by String?
+  response_note String?
+
+  created_at DateTime @default(now())
+  responded_at DateTime?
+
+  match Match @relation(fields: [match_id], references: [id])
+  proposer Player @relation("ScheduleProposer", fields: [proposed_by], references: [id])
+  responder Player? @relation("ScheduleResponder", fields: [responded_by], references: [id])
+}
+
+enum ScheduleProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+// =============================================================================
+// CHALLENGES
+// =============================================================================
+
+model Challenge {
+  id          String  @id @default(uuid())
+  challenger_id String
+  challenged_id String
+  sport_id     String
+  status ChallengeStatus @default(PENDING)
+
+  request_note String?
+  response_note String?
+
+  created_at DateTime @default(now())
+  responded_at DateTime?
+
+  matches Match[] // Um desafio pode gerar um ou mais matches, dependendo da modalidade e configuração
+
+  // Configurações do desafio, como regras específicas ou condições de vitória
+  config Json?
+
+  is_active  Boolean  @default(true)
+
+  challenger Player @relation("ChallengeChallenger", fields: [challenger_id], references: [id])
+  challenged Player @relation("ChallengeChallenged", fields: [challenged_id], references: [id])
+  sport      Sport  @relation(fields: [sport_id], references: [id])
+
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+  COMPLETED
+  CANCELED
+}
