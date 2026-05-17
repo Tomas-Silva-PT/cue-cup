@@ -32,6 +32,17 @@ model User {
   updated_at    DateTime @updatedAt
 
   player Player?
+  refresh_tokens RefreshToken[]
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token      String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id])
 }
 
 // =============================================================================

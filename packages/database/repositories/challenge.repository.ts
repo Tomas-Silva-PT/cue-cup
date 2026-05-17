@@ -1,4 +1,4 @@
-import { ChallengeStatus, ChallengeCreateInput } from "../prisma/prisma";
+import { ChallengeStatus, ChallengeCreateInput, ChallengeUpdateInput } from "../prisma/prisma";
 import { BaseRepository } from "./base.repository";
 
 export class ChallengeRepository extends BaseRepository {
@@ -76,7 +76,7 @@ export class ChallengeRepository extends BaseRepository {
     return this.db.challenge.create({ data });
   }
 
-  async update(id: string, data: ChallengeCreateInput) {
+  async update(id: string, data: ChallengeUpdateInput) {
     return this.db.challenge.update({
       where: { id },
       data,

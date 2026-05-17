@@ -1,4 +1,4 @@
-import { UserCreateInput, UserUpdateInput } from "../prisma/prisma";
+import { RefreshTokenCreateInput, UserCreateInput, UserUpdateInput } from "../prisma/prisma";
 import { BaseRepository } from "./base.repository";
 
 export class UserRepository extends BaseRepository {
@@ -45,6 +45,33 @@ export class UserRepository extends BaseRepository {
     return this.db.user.update({
       where: { id },
       data: { is_active: false },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Refresh Tokens
+  // -------------------------------------------------------------------------
+ 
+  async findRefreshToken(token: string) {
+    return this.db.refreshToken.findUnique({
+      where: { token },
+    });
+  }
+ 
+  async createRefreshToken(data: RefreshTokenCreateInput) {
+    return this.db.refreshToken.create({ data });
+  }
+ 
+  async deleteRefreshToken(token: string) {
+    return this.db.refreshToken.delete({
+      where: { token },
+    });
+  }
+ 
+  // Invalidate all refresh tokens for a user — useful for "logout all devices"
+  async deleteAllRefreshTokens(userId: string) {
+    return this.db.refreshToken.deleteMany({
+      where: { user_id: userId },
     });
   }
 }
