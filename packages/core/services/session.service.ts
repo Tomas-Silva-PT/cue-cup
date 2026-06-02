@@ -142,7 +142,63 @@ export class SessionService {
       );
     }
 
-    return this.repos.session.confirmResult(sessionId, player.id, "MUTUAL_AGREEMENT");
+    const confirmed = await this.repos.session.confirmResult(sessionId, player.id, "MUTUAL_AGREEMENT");
+
+    // Try to auto-complete the match based on bestOf rules
+    await this.tryAutoCompleteMatch(session.match_id);
+
+    return confirmed;
+  }
+
+  // ---------------------------------------------------------------------------
+  // AUTO-COMPLETE MATCH
+  // Called after a result is confirmed — checks if either side has reached
+  // the wins needed based on bestOf config and completes the match if so
+  // ---------------------------------------------------------------------------
+
+  private async tryAutoCompleteMatch(matchId: string) {
+    const match = await this.repos.match.findWithSessions(matchId);
+    if (!match || match.status === "COMPLETED") return;
+
+    // Get bestOf from phase config (tournament match) or challenge config
+    let bestOf = 1;
+
+    if (match.phase_group_id) {
+      const group = await this.repos.phase.findGroupById(match.phase_group_id);
+      if (group) {
+        const phase = await this.repos.phase.findById(group.phase_id);
+        if (phase?.config) {
+          const config = phase.config as Record<string, unknown>;
+          bestOf = (config.bestOf as number) ?? 1;
+        }
+      }
+    } else if (match.challenge_id) {
+      const challenge = await this.repos.challenge.findById(match.challenge_id);
+      if (challenge?.config) {
+        const config = challenge.config as Record<string, unknown>;
+        bestOf = (config.bestOf as number) ?? 1;
+      }
+    }
+
+    const winsNeeded = Math.ceil(bestOf / 2);
+
+    // Count wins from confirmed session results
+    let homeWins = 0;
+    let awayWins = 0;
+
+    for (const session of (match as any).sessions ?? []) {
+      const result = session.result;
+      if (!result || result.status !== "CONFIRMED") continue;
+      if (result.score_home > result.score_away) homeWins++;
+      else if (result.score_away > result.score_home) awayWins++;
+    }
+
+    // Auto-complete if either side reached winsNeeded
+    if (homeWins >= winsNeeded) {
+      await this.repos.match.setWinner(matchId, "HOME");
+    } else if (awayWins >= winsNeeded) {
+      await this.repos.match.setWinner(matchId, "AWAY");
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -198,7 +254,7 @@ export class SessionService {
       throw new SessionError("User not found", "USER_NOT_FOUND");
     }
 
-    if (user.role !== "ADMIN") {
+    if (user.role !== "ADMIN" && user.role !== "REFEREE") {
       throw new SessionError("Not authorized", "UNAUTHORIZED");
     }
 
@@ -218,7 +274,12 @@ export class SessionService {
       proposed_by: userId,
     });
 
-    return this.repos.session.confirmResult(sessionId, userId, "REFEREE_DECISION");
+    const confirmed = await this.repos.session.confirmResult(sessionId, userId, "REFEREE_DECISION");
+
+    // Try to auto-complete the match based on bestOf rules
+    await this.tryAutoCompleteMatch(session.match_id);
+
+    return confirmed;
   }
 
   // ---------------------------------------------------------------------------

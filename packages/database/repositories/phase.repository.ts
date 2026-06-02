@@ -1,4 +1,4 @@
-import { PhaseStatus, PhaseCreateInput, PhaseUpdateInput, PhaseGroupCreateInput, PhaseGroupUpdateInput } from "../prisma/prisma";
+import { Prisma, PhaseStatus, PhaseCreateInput, PhaseUpdateInput, PhaseGroupCreateInput, PhaseGroupUpdateInput } from "../prisma/prisma";
 import { BaseRepository } from "./base.repository";
 
 export class PhaseRepository extends BaseRepository {
@@ -33,9 +33,32 @@ export class PhaseRepository extends BaseRepository {
     return this.db.phase.findUnique({
       where: { id },
       include: {
+        tournament: {
+          select: { id: true, name: true, created_by: true },
+        },
         groups: {
           orderBy: { order: "asc" },
-          include: { phaseGroupParticipants: true },
+          include: {
+            phaseGroupParticipants: {
+              include: {
+                participant: {
+                  include: { player: true },
+                },
+              },
+            },
+            matches: {
+              include: {
+                participants: {
+                  include: { player: true },
+                },
+                sessions: {
+                  include: { result: true },
+                  orderBy: { number: "asc" },
+                },
+              },
+              orderBy: { created_at: "asc" },
+            },
+          },
         },
       },
     });

@@ -18,6 +18,7 @@ interface PhaseConfig {
   bestOf?: number;
   advanceTopN?: number;
   tiebreak?: string[];
+  groups?: number;           // ROUND_ROBIN / LEAGUE — how many groups to split into (default: 1)
   rounds?: number;           // SWISS
   thirdPlaceMatch?: boolean; // SINGLE_ELIMINATION
   pointsWin?: number;        // LEAGUE
@@ -78,7 +79,7 @@ export class PhaseService {
       description: input.description,
       order: input.order,
       type: input.type,
-      config: input.config as any,
+      config: input.config,
     });
   }
 
@@ -250,10 +251,11 @@ export class PhaseService {
       phaseType === "DOUBLE_ELIMINATION" ||
       phaseType === "SWISS"
     ) {
-      // Single group (bracket or swiss pool)
+      // Always a single group for bracket/pool formats
+      const groupName = phaseType === "SWISS" ? "Pool" : "Bracket";
       const group = await this.repos.phase.createGroup({
         phase: { connect: { id: phaseId } },
-        name: phaseType === "SWISS" ? "Pool" : "Bracket",
+        name: groupName,
         order: 1,
       });
 
@@ -265,22 +267,76 @@ export class PhaseService {
     }
 
     if (phaseType === "ROUND_ROBIN" || phaseType === "LEAGUE") {
-      // For now, all participants go into one group
-      // Future: support splitting into multiple groups (Group A, Group B...)
-      const group = await this.repos.phase.createGroup({
-        phase: { connect: { id: phaseId } },
-        name: "Group A",
-        order: 1,
-      });
+      const numberOfGroups = config.groups ?? 1;
 
-      for (const participant of seeded) {
-        await this.repos.phase.addParticipantToGroup(group.id, participant.id);
+      if (numberOfGroups === 1) {
+        // Single group — all participants together
+        const group = await this.repos.phase.createGroup({
+          phase: { connect: { id: phaseId } },
+          name: "Group A",
+          order: 1,
+        });
+
+        for (const participant of seeded) {
+          await this.repos.phase.addParticipantToGroup(group.id, participant.id);
+        }
+
+        return [{ group, participants: seeded }];
       }
 
-      return [{ group, participants: seeded }];
+      // Multiple groups — split participants evenly using snake seeding
+      // Snake seeding distributes participants fairly:
+      // Group A gets picks 1, 2N, 2N+1...
+      // Group B gets picks 2, 2N-1, 2N+2...
+      // This ensures groups are balanced in strength when seeding is used
+      const groupBuckets: any[][] = Array.from({ length: numberOfGroups }, () => []);
+      const groupNames = this.generateGroupNames(numberOfGroups);
+
+      seeded.forEach((participant, index) => {
+        // Snake pattern: 0→0, 1→1, 2→2, 3→2, 4→1, 5→0, 6→0...
+        const cycle = Math.floor(index / numberOfGroups);
+        const posInCycle = index % numberOfGroups;
+        const groupIndex =
+          cycle % 2 === 0 ? posInCycle : numberOfGroups - 1 - posInCycle;
+        groupBuckets[groupIndex]!.push(participant);
+      });
+
+      // Create all groups and assign participants
+      const result = [];
+      for (let i = 0; i < numberOfGroups; i++) {
+        const group = await this.repos.phase.createGroup({
+          phase: { connect: { id: phaseId } },
+          name: groupNames[i] ?? `Group ${i + 1}`,
+          order: i + 1,
+        });
+
+        const groupParticipants = groupBuckets[i] ?? [];
+        for (const participant of groupParticipants) {
+          await this.repos.phase.addParticipantToGroup(group.id, participant.id);
+        }
+
+        result.push({ group, participants: groupParticipants });
+      }
+
+      return result;
     }
 
     throw new PhaseError(`Unsupported phase type: ${phaseType}`, "UNSUPPORTED_PHASE_TYPE");
+  }
+
+  // Generates group names: A, B, C... Z, AA, AB...
+  private generateGroupNames(count: number): string[] {
+    const names = [];
+    for (let i = 0; i < count; i++) {
+      if (i < 26) {
+        names.push(`Group ${String.fromCharCode(65 + i)}`);
+      } else {
+        const first = String.fromCharCode(65 + Math.floor(i / 26) - 1);
+        const second = String.fromCharCode(65 + (i % 26));
+        names.push(`Group ${first}${second}`);
+      }
+    }
+    return names;
   }
 
   // ---------------------------------------------------------------------------
@@ -329,7 +385,7 @@ export class PhaseService {
                 { player_id: participants[i].player_id, side: "HOME" },
                 { player_id: participants[j].player_id, side: "AWAY" },
               ],
-          },
+            },
         });
       }
     }
@@ -410,7 +466,7 @@ export class PhaseService {
           phaseGroup: { connect: { id: groupId } },
           participants: {
             create: [{ player_id: bye.player_id, side: "HOME" }],
-        },
+          },
       });
     }
 

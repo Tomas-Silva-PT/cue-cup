@@ -1,4 +1,4 @@
-import { SessionStatus, ResultStatus, ResultConfirmationMethod, SessionUpdateInput, SessionCreateInput,  ResultCreateInput } from "../prisma/prisma";
+import { Prisma, SessionStatus, ResultStatus, ResultConfirmationMethod, ResultCreateInput, SessionUpdateInput, SessionCreateInput } from "../prisma/prisma";
 import { BaseRepository } from "./base.repository";
 
 export class SessionRepository extends BaseRepository {
@@ -9,6 +9,16 @@ export class SessionRepository extends BaseRepository {
   async findById(id: string) {
     return this.db.session.findUnique({
       where: { id },
+      include: {
+        result: true,
+        match: {
+          include: {
+            participants: {
+              include: { player: true },
+            },
+          },
+        },
+      },
     });
   }
 
@@ -32,7 +42,16 @@ export class SessionRepository extends BaseRepository {
   async findWithResult(id: string) {
     return this.db.session.findUnique({
       where: { id },
-      include: { result: true },
+      include: {
+        result: true,
+        match: {
+          include: {
+            participants: {
+              include: { player: true },
+            },
+          },
+        },
+      },
     });
   }
 

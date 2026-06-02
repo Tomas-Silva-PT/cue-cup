@@ -41,7 +41,7 @@ export class TournamentError extends Error {
 // =============================================================================
 
 export class TournamentService {
-  constructor(private readonly repos: Repositories) {}
+  constructor(private readonly repos: Repositories) { }
 
   // ---------------------------------------------------------------------------
   // CREATE TOURNAMENT
@@ -84,6 +84,10 @@ export class TournamentService {
     });
   }
 
+  async getTournaments(publicOnly = false) {
+    return publicOnly ? this.repos.tournament.findPublic() : this.repos.tournament.findAll();
+  }
+
   // ---------------------------------------------------------------------------
   // GET TOURNAMENT
   // ---------------------------------------------------------------------------
@@ -102,15 +106,25 @@ export class TournamentService {
   // JOIN TOURNAMENT
   // ---------------------------------------------------------------------------
 
-  async joinTournament(userId: string, tournamentId: string, inviteCode?: string) {
+  async joinTournament(userId: string, inviteCode?: string, tournamentId?: string) {
     const player = await this.repos.player.findByUserId(userId);
     if (!player) {
       throw new TournamentError("Player not found", "PLAYER_NOT_FOUND");
     }
 
-    const tournament = await this.repos.tournament.findById(tournamentId);
-    if (!tournament || !tournament.is_active) {
-      throw new TournamentError("Tournament not found", "TOURNAMENT_NOT_FOUND");
+    let tournament;
+    if(tournamentId) {
+      tournament = await this.repos.tournament.findById(tournamentId);
+    } else if (inviteCode) {
+      tournament = await this.repos.tournament.findByInvitationCode(inviteCode);
+    }
+    
+    if(!tournament) {
+      throw new TournamentError("Tournament ID or invite code is required", "TOURNAMENT_ID_OR_INVITE_CODE_REQUIRED");
+    }
+
+    if (!tournament.is_active) {
+      throw new TournamentError("Tournament is not active", "TOURNAMENT_NOT_ACTIVE");
     }
 
     // Only OPEN tournaments can be joined
@@ -123,14 +137,17 @@ export class TournamentService {
 
     // Private tournaments require an invite code
     if (tournament.visibility === "PRIVATE") {
-      if (!inviteCode || inviteCode !== tournament.invitation_code) {
+      if (!inviteCode) {
+        throw new TournamentError("Invite code is required", "INVITE_CODE_REQUIRED");
+      }
+      if (inviteCode !== tournament.invitation_code) {
         throw new TournamentError("Invalid invite code", "INVALID_INVITE_CODE");
       }
     }
 
     // Check player is not already a participant
     const existing = await this.repos.tournament.findParticipant(
-      tournamentId,
+      tournament.id,
       player.id
     );
     if (existing) {
@@ -142,14 +159,14 @@ export class TournamentService {
 
     // Check max players limit
     if (tournament.max_players) {
-      const participants = await this.repos.tournament.findParticipants(tournamentId);
+      const participants = await this.repos.tournament.findParticipants(tournament.id);
       const confirmed = participants.filter((p) => p.status === "ACCEPTED");
       if (confirmed.length >= tournament.max_players) {
         throw new TournamentError("Tournament is full", "TOURNAMENT_FULL");
       }
     }
 
-    return this.repos.tournament.addParticipant(tournamentId, player.id);
+    return this.repos.tournament.addParticipant(tournament.id, player.id);
   }
 
   // ---------------------------------------------------------------------------
@@ -229,6 +246,25 @@ export class TournamentService {
   async rejectInvite(userId: string, inviteId: string) {
     await this.resolveInvite(userId, inviteId);
     return this.repos.tournament.updateInviteStatus(inviteId, "REJECTED");
+  }
+
+  // ---------------------------------------------------------------------------
+  // OPEN TOURNAMENT
+  // Moves the tournament from DRAFT to OPEN — enables registration
+  // Only the creator can do this
+  // ---------------------------------------------------------------------------
+
+  async openTournament(userId: string, tournamentId: string) {
+    const { tournament } = await this.resolveCreator(userId, tournamentId);
+
+    if (tournament.status !== "DRAFT") {
+      throw new TournamentError(
+        "Only draft tournaments can be opened for registration",
+        "INVALID_STATUS_TRANSITION"
+      );
+    }
+
+    return this.repos.tournament.update(tournamentId, { status: "OPEN" });
   }
 
   // ---------------------------------------------------------------------------
@@ -336,6 +372,6 @@ export class TournamentService {
 
   // Generates a random 8-character uppercase invite code
   private generateInviteCode(): string {
-    return Math.random().toString(36).substring(2, 10).toUpperCase();
+    return Math.random().toString(36).substring(2, 8).toUpperCase();
   }
 }

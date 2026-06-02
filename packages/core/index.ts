@@ -1,3 +1,6 @@
+// Types
+export type { JsonValue } from "./types";
+
 // Services
 export { AuthService, AuthError } from "./services/auth.service";
 export { PlayerService, PlayerError } from "./services/player.service";

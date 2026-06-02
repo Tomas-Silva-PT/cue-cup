@@ -183,13 +183,14 @@ export class MatchService {
   }
 
   // ---------------------------------------------------------------------------
-  // WALKOVER
-  // Awards a walkover win to one side
-  // For tournament matches — only the tournament creator can do this
-  // For challenge matches — either participant can do this
+  // WALKOVER / FORFEIT
+  // Two scenarios:
+  //   1. Participant forfeits — they concede, opponent wins automatically
+  //   2. Tournament creator awards walkover — they choose which side wins
+  //      (e.g. opponent no-show)
   // ---------------------------------------------------------------------------
 
-  async walkover(userId: string, matchId: string, winningSide: "HOME" | "AWAY") {
+  async walkover(userId: string, matchId: string, winningSide?: "HOME" | "AWAY") {
     const match = await this.repos.match.findWithParticipants(matchId);
     if (!match) {
       throw new MatchError("Match not found", "MATCH_NOT_FOUND");
@@ -199,24 +200,47 @@ export class MatchService {
       throw new MatchError("Match is already finished", "MATCH_ALREADY_FINISHED");
     }
 
-    if (match.context === "TOURNAMENT") {
-      // Only the tournament creator can award a walkover
+    const player = await this.repos.player.findByUserId(userId);
+    if (!player) {
+      throw new MatchError("Player not found", "PLAYER_NOT_FOUND");
+    }
+
+    const myParticipant = match.participants.find(
+      (p) => p.player_id === player.id
+    );
+    const isParticipant = !!myParticipant;
+
+    let resolvedWinner: "HOME" | "AWAY";
+
+    if (isParticipant) {
+      // Participant forfeiting — they lose, opponent wins
+      resolvedWinner = myParticipant!.side === "HOME" ? "AWAY" : "HOME";
+    } else if (match.context === "TOURNAMENT") {
+      // Check if acting user is the tournament creator
       const group = await this.repos.phase.findGroupById(match.phase_group_id!);
       const phase = await this.repos.phase.findById(group!.phase_id);
       const tournament = await this.repos.tournament.findById(phase!.tournament_id);
-      const player = await this.repos.player.findByUserId(userId);
 
-      if (!player || tournament?.created_by !== player.id) {
+      if (tournament?.created_by !== player.id) {
         throw new MatchError("Not authorized", "UNAUTHORIZED");
       }
+
+      // Creator must specify which side wins
+      if (!winningSide) {
+        throw new MatchError(
+          "You must specify which side wins the walkover",
+          "WINNING_SIDE_REQUIRED"
+        );
+      }
+
+      resolvedWinner = winningSide;
     } else {
-      // For challenges — must be a participant
-      await this.resolveParticipant(userId, matchId);
+      throw new MatchError("Not authorized", "UNAUTHORIZED");
     }
 
     return this.repos.match.update(matchId, {
       status: "WALKOVER",
-      winner: winningSide,
+      winner: resolvedWinner,
     });
   }
 

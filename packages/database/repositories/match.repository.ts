@@ -1,4 +1,4 @@
-import { MatchStatus, MatchSide, MatchParticipantCreateInput, MatchUpdateInput, MatchCreateInput } from "../prisma/prisma";
+import { Prisma, MatchStatus, MatchSide, MatchCreateInput, MatchUpdateInput, MatchParticipantCreateInput } from "../prisma/prisma";
 import { BaseRepository } from "./base.repository";
 
 export class MatchRepository extends BaseRepository {
@@ -38,6 +38,45 @@ export class MatchRepository extends BaseRepository {
     });
   }
 
+  // Matches de um jogador filtrados por status, com includes para o dashboard
+  async findByPlayerAndStatus(
+    playerId: string,
+    statuses?: string[],
+    limit?: number
+  ) {
+    return this.db.match.findMany({
+      where: {
+        participants: {
+          some: { player_id: playerId },
+        },
+        ...(statuses?.length ? { status: { in: statuses as any } } : {}),
+      },
+      include: {
+        participants: {
+          include: { player: true },
+        },
+        sessions: {
+          orderBy: { number: "asc" },
+        },
+        scheduleProposals: {
+          where: { status: "ACCEPTED" },
+        },
+        phaseGroup: {
+          include: {
+            phase: {
+              include: {
+                tournament: true,
+              },
+            },
+          },
+        },
+        challenge: true,
+      },
+      orderBy: { updated_at: "desc" },
+      take: limit,
+    });
+  }
+
   async findWithParticipants(id: string) {
     return this.db.match.findUnique({
       where: { id },
@@ -53,10 +92,24 @@ export class MatchRepository extends BaseRepository {
     return this.db.match.findUnique({
       where: { id },
       include: {
+        participants: {
+          include: { player: true },
+        },
         sessions: {
           orderBy: { number: "asc" },
           include: { result: true },
         },
+        scheduleProposals: {
+          orderBy: { created_at: "desc" },
+        },
+        phaseGroup: {
+          include: {
+            phase: {
+              include: { tournament: true },
+            },
+          },
+        },
+        challenge: true,
       },
     });
   }

@@ -1,4 +1,4 @@
-import { TournamentParticipantStatus, TournamentInviteStatus, TournamentCreateInput, TournamentUpdateInput, TournamentInviteCreateInput } from "../prisma/prisma";
+import { Prisma, TournamentParticipantStatus, TournamentInviteStatus, TournamentCreateInput, TournamentUpdateInput, TournamentInviteCreateInput } from "../prisma/prisma";
 import { BaseRepository } from "./base.repository";
 
 export class TournamentRepository extends BaseRepository {
@@ -28,6 +28,22 @@ export class TournamentRepository extends BaseRepository {
     return this.db.tournament.findMany({
       where: onlyActive ? { is_active: true } : undefined,
       orderBy: { created_at: "desc" },
+      include: {
+        sport: true,
+        creator: true,
+      }
+    });
+  }
+
+  async findPublic() {
+    return this.db.tournament.findMany({
+      where: { is_active: true, visibility: "PUBLIC" },
+      orderBy: { created_at: "desc" },
+      include: {
+        sport: true,
+        creator: true,
+      }
+
     });
   }
 
@@ -77,6 +93,67 @@ export class TournamentRepository extends BaseRepository {
         },
       },
     });
+  }
+
+  // Full detail fetch — used by the tournament detail page
+  async findWithPhasesAndParticipants(id: string) {
+    return this.db.tournament.findUnique({
+      where: { id },
+      include: {
+        sport: true,
+        creator: true,
+        tournamentParticipants: {
+          include: { player: true },
+          orderBy: { joined_at: "asc" },
+        },
+        phases: {
+          orderBy: { order: "asc" },
+          include: {
+            groups: {
+              orderBy: { order: "asc" },
+              include: {
+                matches: {
+                  select: { id: true, status: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // Tournaments created by a player + tournaments they participate in
+  async findMineByUserId(playerId: string) {
+    const [created, participating] = await Promise.all([
+      this.db.tournament.findMany({
+        where: { created_by: playerId, is_active: true },
+        include: {
+          sport: true,
+          creator: true,
+          _count: { select: { tournamentParticipants: true } },
+        },
+        orderBy: { created_at: "desc" },
+      }),
+      this.db.tournament.findMany({
+        where: {
+          is_active: true,
+          tournamentParticipants: {
+            some: { player_id: playerId, status: "ACCEPTED" },
+          },
+          // Exclude ones already in "created" to avoid duplicates
+          NOT: { created_by: playerId },
+        },
+        include: {
+          sport: true,
+          creator: true,
+          _count: { select: { tournamentParticipants: true } },
+        },
+        orderBy: { created_at: "desc" },
+      }),
+    ]);
+
+    return { created, participating };
   }
 
   // -------------------------------------------------------------------------
@@ -163,12 +240,13 @@ export class TournamentRepository extends BaseRepository {
   // Mutations — TournamentParticipant
   // -------------------------------------------------------------------------
 
-  async addParticipant(tournamentId: string, playerId: string, teamId?: string) {
+  async addParticipant(tournamentId: string, playerId: string, teamId?: string, status?: TournamentParticipantStatus) {
     return this.db.tournamentParticipant.create({
       data: {
         tournament_id: tournamentId,
         player_id: playerId,
         team_id: teamId,
+        status: status ?? TournamentParticipantStatus.ACCEPTED,
       },
     });
   }

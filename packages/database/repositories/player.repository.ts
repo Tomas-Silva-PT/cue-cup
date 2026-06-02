@@ -15,12 +15,20 @@ export class PlayerRepository extends BaseRepository {
   async findByUserId(userId: string) {
     return this.db.player.findUnique({
       where: { user_id: userId },
+      include: {
+        teams: {
+          include: { team: true },
+        },
+      },
     });
   }
 
   async findByNickname(nickname: string) {
     return this.db.player.findUnique({
       where: { nickname },
+      include: {
+        teams: { include: { team: true } },
+      },
     });
   }
 
