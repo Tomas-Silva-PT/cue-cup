@@ -84,6 +84,77 @@ export class PhaseService {
   }
 
   // ---------------------------------------------------------------------------
+  // UPDATE PHASE
+  // Only the tournament creator can update a phase
+  // Only allowed while the tournament is in DRAFT or OPEN status
+  // ---------------------------------------------------------------------------
+
+  async updatePhase(
+    userId: string,
+    phaseId: string,
+    input: Partial<Omit<CreatePhaseInput, "order">>
+  ) {
+    const phase = await this.repos.phase.findById(phaseId);
+    if (!phase) {
+      throw new PhaseError("Phase not found", "PHASE_NOT_FOUND");
+    }
+
+    const { tournament } = await this.resolveCreator(userId, phase.tournament_id);
+
+    if (tournament.status !== "DRAFT" && tournament.status !== "OPEN") {
+      throw new PhaseError(
+        "Phases can only be edited before the tournament starts",
+        "INVALID_STATUS"
+      );
+    }
+
+    if (phase.status !== "PENDING") {
+      throw new PhaseError(
+        "Only pending phases can be edited",
+        "PHASE_ALREADY_STARTED"
+      );
+    }
+
+    return this.repos.phase.update(phaseId, {
+      ...(input.name && { name: input.name }),
+      ...(input.description !== undefined && { description: input.description }),
+      ...(input.type && { type: input.type }),
+      ...(input.config && { config: input.config as any }),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE PHASE
+  // Only the tournament creator can delete a phase
+  // Only allowed while the tournament is in DRAFT or OPEN status
+  // ---------------------------------------------------------------------------
+
+  async deletePhase(userId: string, phaseId: string) {
+    const phase = await this.repos.phase.findById(phaseId);
+    if (!phase) {
+      throw new PhaseError("Phase not found", "PHASE_NOT_FOUND");
+    }
+
+    const { tournament } = await this.resolveCreator(userId, phase.tournament_id);
+
+    if (tournament.status !== "DRAFT" && tournament.status !== "OPEN") {
+      throw new PhaseError(
+        "Phases can only be deleted before the tournament starts",
+        "INVALID_STATUS"
+      );
+    }
+
+    if (phase.status !== "PENDING") {
+      throw new PhaseError(
+        "Only pending phases can be deleted",
+        "PHASE_ALREADY_STARTED"
+      );
+    }
+
+    return this.repos.phase.delete(phaseId);
+  }
+
+  // ---------------------------------------------------------------------------
   // GET PHASE
   // ---------------------------------------------------------------------------
 
@@ -134,7 +205,7 @@ export class PhaseService {
     // Get participants for this phase
     // Phase 1 → all confirmed tournament participants
     // Phase N → participants who advanced from the previous phase
-    const participants = await this.getPhaseParticipants(tournamentId, phase.order);
+    const participants = await this.getPhaseParticipants(tournamentId, phase.order, phaseId);
 
     if (participants.length < 2) {
       throw new PhaseError(
@@ -143,7 +214,7 @@ export class PhaseService {
       );
     }
 
-    const config = phase.config as unknown as PhaseConfig;
+    const config = phase.config as PhaseConfig;
 
     // Create groups based on phase type
     const groups = await this.createGroups(phase.id, phase.type, participants, config);
@@ -161,8 +232,8 @@ export class PhaseService {
 
   // ---------------------------------------------------------------------------
   // COMPLETE PHASE
-  // Marks a phase as completed
-  // Only the tournament creator can complete a phase
+  // Marks a phase as completed, advances players to the next phase,
+  // or completes the tournament if this is the last phase
   // ---------------------------------------------------------------------------
 
   async completePhase(userId: string, phaseId: string) {
@@ -182,7 +253,9 @@ export class PhaseService {
     for (const group of groups) {
       const groupWithMatches = await this.repos.phase.findGroupWithMatches(group.id);
       const incomplete = groupWithMatches?.matches.filter(
-        (m) => m.status !== "COMPLETED" && m.status !== "WALKOVER" && m.status !== "CANCELED"
+        (m) => m.status !== "COMPLETED" &&
+               m.status !== "WALKOVER" &&
+               m.status !== "CANCELED"
       );
       if (incomplete && incomplete.length > 0) {
         throw new PhaseError(
@@ -192,21 +265,187 @@ export class PhaseService {
       }
     }
 
-    return this.repos.phase.updateStatus(phaseId, "COMPLETED");
+    // Calculate final standings and collect advancing participants
+    const config = phase.config as unknown as PhaseConfig;
+    const advanceTopN = config.advanceTopN ?? 1;
+    const advancingParticipantIds: string[] = [];
+
+    for (const group of groups) {
+      const withParticipants = await this.repos.phase.findGroupWithParticipants(group.id);
+      const participants = withParticipants?.phaseGroupParticipants ?? [];
+
+      const standings = await this.buildGroupStandings(group.id, participants, config);
+
+      // Set final_position on each PhaseGroupParticipant
+      for (let i = 0; i < standings.length; i++) {
+        await this.repos.phase.setFinalPosition(
+          group.id,
+          standings[i]!.tournamentParticipantId,
+          i + 1
+        );
+      }
+
+      // Collect advancing participants (top N per group)
+      advancingParticipantIds.push(
+        ...standings.slice(0, advanceTopN).map((s) => s.tournamentParticipantId)
+      );
+    }
+
+    // Mark phase as completed
+    await this.repos.phase.updateStatus(phaseId, "COMPLETED");
+
+    // Find the next pending phase in this tournament
+    const allPhases = await this.repos.phase.findByTournament(phase.tournament_id);
+    const nextPhase = allPhases
+      .sort((a, b) => a.order - b.order)
+      .find((p) => p.order > phase.order && p.status === "PENDING");
+
+    if (nextPhase) {
+      // Advance players to the next phase via a staging group
+      await this.advancePlayersToNextPhase(nextPhase.id, advancingParticipantIds);
+    } else {
+      // Last phase — complete the tournament
+      await this.repos.tournament.update(phase.tournament_id, {
+        status: "COMPLETED" as any,
+      });
+    }
+
+    return this.repos.phase.findWithGroups(phaseId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADVANCE PLAYERS TO NEXT PHASE
+  // Stores advancing participants in a staging group on the next phase.
+  // When startPhase is called, it reads from this staging group instead
+  // of all tournament participants.
+  // ---------------------------------------------------------------------------
+
+  private async advancePlayersToNextPhase(
+    nextPhaseId: string,
+    tournamentParticipantIds: string[]
+  ) {
+    const existingGroups = await this.repos.phase.findGroupsByPhase(nextPhaseId);
+
+    // Use existing staging group or create one
+    let stagingGroup = existingGroups.find((g) => g.name === "Staging") ?? null;
+    if (!stagingGroup) {
+      stagingGroup = await this.repos.phase.createGroup({
+        phase: { connect: { id: nextPhaseId } },
+        name: "Staging",
+        order: 0,
+      });
+    }
+
+    for (const participantId of tournamentParticipantIds) {
+      const existing = await this.repos.phase.findGroupParticipant(
+        stagingGroup.id,
+        participantId
+      );
+      if (!existing) {
+        await this.repos.phase.addParticipantToGroup(stagingGroup.id, participantId);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // BUILD GROUP STANDINGS
+  // Calculates standings from completed matches within a group
+  // ---------------------------------------------------------------------------
+
+  private async buildGroupStandings(
+    groupId: string,
+    participants: any[],
+    config: PhaseConfig
+  ) {
+    const pointsWin = (config.pointsWin as number) ?? 3;
+    const pointsDraw = (config.pointsDraw as number) ?? 1;
+    const pointsLoss = (config.pointsLoss as number) ?? 0;
+
+    interface StandingEntry {
+      tournamentParticipantId: string;
+      playerId: string;
+      points: number;
+      wins: number;
+      draws: number;
+      losses: number;
+      scoreDiff: number;
+    }
+
+    const map = new Map<string, StandingEntry>();
+
+    for (const gp of participants) {
+      map.set(gp.participant.player_id, {
+        tournamentParticipantId: gp.tournament_participant_id,
+        playerId: gp.participant.player_id,
+        points: 0,
+        wins: 0,
+        draws: 0,
+        losses: 0,
+        scoreDiff: 0,
+      });
+    }
+
+    const matches = await this.repos.match.findByGroup(groupId);
+    const completed = matches.filter(
+      (m) => m.status === "COMPLETED" || m.status === "WALKOVER"
+    );
+
+    for (const match of completed) {
+      const withParts = await this.repos.match.findWithParticipants(match.id);
+      if (!withParts) continue;
+
+      const home = withParts.participants.find((p) => p.side === "HOME");
+      const away = withParts.participants.find((p) => p.side === "AWAY");
+      if (!home || !away) continue;
+
+      const hs = map.get(home.player_id);
+      const as_ = map.get(away.player_id);
+      if (!hs || !as_) continue;
+
+      if (match.winner === "HOME") {
+        hs.wins++; hs.points += pointsWin; hs.scoreDiff++;
+        as_.losses++; as_.points += pointsLoss; as_.scoreDiff--;
+      } else if (match.winner === "AWAY") {
+        as_.wins++; as_.points += pointsWin; as_.scoreDiff++;
+        hs.losses++; hs.points += pointsLoss; hs.scoreDiff--;
+      } else {
+        hs.draws++; hs.points += pointsDraw;
+        as_.draws++; as_.points += pointsDraw;
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      if (b.wins !== a.wins) return b.wins - a.wins;
+      return b.scoreDiff - a.scoreDiff;
+    });
   }
 
   // ---------------------------------------------------------------------------
   // PRIVATE — GET PHASE PARTICIPANTS
   // ---------------------------------------------------------------------------
 
-  private async getPhaseParticipants(tournamentId: string, phaseOrder: number) {
+  private async getPhaseParticipants(tournamentId: string, phaseOrder: number, phaseId: string) {
+    // Check if this phase already has a staging group populated by completePhase
+    const existingGroups = await this.repos.phase.findGroupsByPhase(phaseId);
+    const stagingGroup = existingGroups.find((g) => g.name === "Staging");
+
+    if (stagingGroup) {
+      // Use participants already placed in the staging group
+      const withParticipants = await this.repos.phase.findGroupWithParticipants(stagingGroup.id);
+      const participants = (withParticipants?.phaseGroupParticipants ?? []).map((gp) => gp.participant);
+      // Delete the staging group — it will be replaced by real groups in createGroups
+      await this.repos.phase.deleteGroup(stagingGroup.id);
+      return participants;
+    }
+
     if (phaseOrder === 1) {
       // First phase — all confirmed tournament participants
       const all = await this.repos.tournament.findParticipants(tournamentId);
       return all.filter((p) => p.status === "ACCEPTED");
     }
 
-    // Subsequent phases — find who advanced from the previous phase
+    // Fallback: derive from previous phase standings
     const phases = await this.repos.phase.findByTournament(tournamentId);
     const previousPhase = phases.find((p) => p.order === phaseOrder - 1);
 
@@ -411,7 +650,7 @@ export class PhaseService {
               create: [
                 { player_id: home.player_id, side: "HOME" },
               ],
-            },
+          },
         });
         continue;
       }

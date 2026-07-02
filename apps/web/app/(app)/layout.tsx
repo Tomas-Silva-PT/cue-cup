@@ -45,11 +45,11 @@ const navItems = [
     href: "/tournaments",
     icon: Trophy,
   },
-  {
-    label: "Challenges",
-    href: "/challenges",
-    icon: Swords,
-  },
+  // {
+  //   label: "Challenges",
+  //   href: "/challenges",
+  //   icon: Swords,
+  // },
   {
     label: "Profile",
     href: "/profile",

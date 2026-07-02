@@ -51,15 +51,15 @@ interface Match {
   };
 }
 
-interface Challenge {
-  id: string;
-  status: string;
-  request_note: string | null;
-  created_at: string;
-  challenger: { id: string; nickname: string };
-  challenged: { id: string; nickname: string };
-  sport: { id: string; name: string };
-}
+// interface Challenge {
+//   id: string;
+//   status: string;
+//   request_note: string | null;
+//   created_at: string;
+//   challenger: { id: string; nickname: string };
+//   challenged: { id: string; nickname: string };
+//   sport: { id: string; name: string };
+// }
 
 // =============================================================================
 // FETCHERS
@@ -177,75 +177,75 @@ function ActiveMatches() {
 // PENDING CHALLENGES SECTION
 // =============================================================================
 
-function PendingChallenges() {
-  const { data, isLoading } = useSWR<{ sent: Challenge[]; received: Challenge[] }>(
-    "/challenges/mine",
-    fetcher
-  );
+// function PendingChallenges() {
+//   const { data, isLoading } = useSWR<{ sent: Challenge[]; received: Challenge[] }>(
+//     "/challenges/mine",
+//     fetcher
+//   );
 
-  const pendingReceived = data?.received.filter(
-    (c) => c.status === "PENDING"
-  ) ?? [];
+//   const pendingReceived = data?.received.filter(
+//     (c) => c.status === "PENDING"
+//   ) ?? [];
 
-  return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-base flex items-center gap-2">
-          <Swords className="h-4 w-4 text-primary" />
-          Pending Challenges
-          {pendingReceived.length > 0 && (
-            <Badge className="ml-auto">{pendingReceived.length}</Badge>
-          )}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
-          <SectionSkeleton />
-        ) : !pendingReceived.length ? (
-          <EmptyState icon={Swords} message="No pending challenges" />
-        ) : (
-          <div className="space-y-2">
-            {pendingReceived.map((challenge) => (
-              <Link
-                key={challenge.id}
-                href={`/challenges/${challenge.id}`}
-                className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent transition-colors"
-              >
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium">
-                    {challenge.challenger.nickname} challenged you
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {challenge.sport.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground">·</span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(challenge.created_at), {
-                        addSuffix: true,
-                      })}
-                    </span>
-                  </div>
-                  {challenge.request_note && (
-                    <p className="text-xs text-muted-foreground italic">
-                      &ldquo;{challenge.request_note}&rdquo;
-                    </p>
-                  )}
-                </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-              </Link>
-            ))}
-          </div>
-        )}
-        <div className="mt-3">
-          <Button variant="outline" size="sm" className="w-full" asChild>
-            <Link href="/challenges">View all challenges</Link>
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+//   return (
+//     <Card>
+//       <CardHeader className="pb-3">
+//         <CardTitle className="text-base flex items-center gap-2">
+//           <Swords className="h-4 w-4 text-primary" />
+//           Pending Challenges
+//           {pendingReceived.length > 0 && (
+//             <Badge className="ml-auto">{pendingReceived.length}</Badge>
+//           )}
+//         </CardTitle>
+//       </CardHeader>
+//       <CardContent>
+//         {isLoading ? (
+//           <SectionSkeleton />
+//         ) : !pendingReceived.length ? (
+//           <EmptyState icon={Swords} message="No pending challenges" />
+//         ) : (
+//           <div className="space-y-2">
+//             {pendingReceived.map((challenge) => (
+//               <Link
+//                 key={challenge.id}
+//                 href={`/challenges/${challenge.id}`}
+//                 className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent transition-colors"
+//               >
+//                 <div className="flex flex-col gap-1">
+//                   <span className="text-sm font-medium">
+//                     {challenge.challenger.nickname} challenged you
+//                   </span>
+//                   <div className="flex items-center gap-2">
+//                     <span className="text-xs text-muted-foreground">
+//                       {challenge.sport.name}
+//                     </span>
+//                     <span className="text-xs text-muted-foreground">·</span>
+//                     <span className="text-xs text-muted-foreground">
+//                       {formatDistanceToNow(new Date(challenge.created_at), {
+//                         addSuffix: true,
+//                       })}
+//                     </span>
+//                   </div>
+//                   {challenge.request_note && (
+//                     <p className="text-xs text-muted-foreground italic">
+//                       &ldquo;{challenge.request_note}&rdquo;
+//                     </p>
+//                   )}
+//                 </div>
+//                 <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+//               </Link>
+//             ))}
+//           </div>
+//         )}
+//         <div className="mt-3">
+//           <Button variant="outline" size="sm" className="w-full" asChild>
+//             <Link href="/challenges">View all challenges</Link>
+//           </Button>
+//         </div>
+//       </CardContent>
+//     </Card>
+//   );
+// }
 
 // =============================================================================
 // UPCOMING MATCHES SECTION
@@ -414,9 +414,9 @@ export default function DashboardPage() {
       {/* Grid layout — 1 col on mobile, 2 cols on lg */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ActiveMatches />
-        <PendingChallenges />
+        {/* <PendingChallenges /> */}
         <UpcomingMatches />
-        <RecentResults />
+        {/* <RecentResults /> */}
       </div>
     </div>
   );

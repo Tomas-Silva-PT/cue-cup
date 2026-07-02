@@ -195,7 +195,7 @@ export async function tournamentRoutes(app: FastifyInstance) {
           },
         },
         body: {
-          type: "object",
+          type: ["object", "null"],
           properties: {
             inviteCode: { type: "string" },
           },
@@ -206,10 +206,15 @@ export async function tournamentRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const { inviteCode } = (request.body as { inviteCode?: string }) ?? {};
 
+      console.log("Join tournament request received");
+      console.log("User ID: ", request.user.userId);
+      console.log("Invite code: ", inviteCode);
+      console.log("Tournament ID: ", id);
+
       const participant = await tournamentService.joinTournament(
         request.user.userId,
-        id,
-        inviteCode
+        inviteCode,
+        id
       );
 
       return reply.status(201).send(participant);

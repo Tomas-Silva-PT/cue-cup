@@ -1,4 +1,4 @@
-import { Prisma, PhaseStatus, PhaseCreateInput, PhaseUpdateInput, PhaseGroupCreateInput, PhaseGroupUpdateInput } from "../prisma/prisma";
+import { Prisma, PhaseStatus, PhaseUpdateInput, PhaseCreateInput, PhaseGroupCreateInput, PhaseGroupUpdateInput } from "../prisma/prisma";
 import { BaseRepository } from "./base.repository";
 
 export class PhaseRepository extends BaseRepository {
@@ -131,10 +131,12 @@ export class PhaseRepository extends BaseRepository {
   }
 
   async update(id: string, data: PhaseUpdateInput) {
-    return this.db.phase.update({
-      where: { id },
-      data,
-    });
+    return this.db.phase.update({ where: { id }, data });
+  }
+
+  async delete(id: string) {
+    // Groups and their participants/matches are cascade deleted via DB relations
+    return this.db.phase.delete({ where: { id } });
   }
 
   async updateStatus(id: string, status: PhaseStatus) {
@@ -160,6 +162,16 @@ export class PhaseRepository extends BaseRepository {
     return this.db.phaseGroup.update({
       where: { id },
       data,
+    });
+  }
+
+  async deleteGroup(id: string) {
+    // Remove participants first, then the group
+    await this.db.phaseGroupParticipant.deleteMany({
+      where: { phase_group_id: id },
+    });
+    return this.db.phaseGroup.delete({
+      where: { id },
     });
   }
 
